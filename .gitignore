@@ -1,0 +1,14 @@
+# Log files
+*.log
+
+# All trade analysis results
+trade_analysis_results*.csv
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints
+
+# OS specific files
+.DS_Store
