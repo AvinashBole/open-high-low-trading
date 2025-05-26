@@ -319,24 +319,60 @@ class OHLPatternAnalyzer:
                     self.log_debug(f"DEBUG: Filtered pattern day highs: {pattern_day_only['High'].sort_values().tolist() if not pattern_day_only.empty else 'N/A'}")
                     self.log_debug(f"DEBUG: Filtered previous day lows: {prev_day_only['Low'].sort_values().tolist() if not prev_day_only.empty else 'N/A'}")
                     
-                    # Calculate both ways to see difference
-                    entry_price_all = pattern_data['High'].max()
-                    entry_price_filtered = pattern_day_only['High'].max() if not pattern_day_only.empty else entry_price_all
-                    stop_loss_all = prev_data['Low'].min()
-                    stop_loss_filtered = prev_day_only['Low'].min() if not prev_day_only.empty else stop_loss_all
+                # Calculate entry price from pattern day
+                entry_price_all = pattern_data['High'].max()
+                entry_price_filtered = pattern_day_only['High'].max() if not pattern_day_only.empty else entry_price_all
+                entry_price = entry_price_filtered
+                
+                # Set stop loss to None as default
+                stop_loss_price = None
+                
+                # Get stop loss from previous day data only
+                if not prev_day_only.empty:
+                    # Use ONLY previous day's low as stop loss
+                    stop_loss_price = prev_day_only['Low'].min()
+                    self.log_debug(f"DEBUG: Stop loss set from previous day ({prev_day_str}): {stop_loss_price}")
+                else:
+                    # Try to ensure we get previous day data
+                    self.log_debug(f"WARNING: No filtered data for previous day. Attempting to find previous day data...")
                     
-                    self.log_debug(f"DEBUG: Entry price (all data): {entry_price_all}")
-                    self.log_debug(f"DEBUG: Entry price (filtered): {entry_price_filtered}")
-                    self.log_debug(f"DEBUG: Stop loss (all data): {stop_loss_all}")
-                    self.log_debug(f"DEBUG: Stop loss (filtered): {stop_loss_filtered}")
+                    # Try to find the closest previous day with data
+                    found_prev_data = False
+                    attempt_day = prev_day
+                    for _ in range(5):  # Try up to 5 previous days
+                        attempt_day_str = attempt_day.strftime('%Y-%m-%d')
+                        self.log_debug(f"DEBUG: Looking for previous day data on {attempt_day_str}")
+                        attempt_data = self.get_stock_data(row['symbol'], attempt_day_str, interval='1d')
+                        
+                        if attempt_data is not None and not attempt_data.empty:
+                            # Find first date before pattern date
+                            valid_prev_dates = attempt_data.index[attempt_data.index < pd.to_datetime(row['date'])]
+                            
+                            if len(valid_prev_dates) > 0:
+                                # Use the most recent previous date's data
+                                most_recent_prev = valid_prev_dates.max()
+                                prev_day_data = attempt_data.loc[[most_recent_prev]]
+                                
+                                if not prev_day_data.empty:
+                                    stop_loss_price = prev_day_data['Low'].min()
+                                    self.log_debug(f"DEBUG: Stop loss set from alternative previous date {most_recent_prev.strftime('%Y-%m-%d')}: {stop_loss_price}")
+                                    found_prev_data = True
+                                    break
+                        
+                        # Try one more day back
+                        attempt_day = attempt_day - timedelta(days=1)
                     
-                    # Use the filtered values for specific dates instead of all data
-                    entry_price = entry_price_filtered
-                    stop_loss_price = stop_loss_filtered
-                    self.log_debug(f"DEBUG: USING - Entry: {entry_price}, Target: {entry_price * 1.002}, Stop loss: {stop_loss_price}")
-                    result = self.analyze_future_performance(row['symbol'], row['date'], entry_price, stop_loss_price, pattern_data)
-                    if result:
-                        self.results.append(result)
+                    if not found_prev_data:
+                        self.log_debug(f"ERROR: Could not find valid previous day data for stop loss calculation")
+                        continue  # Skip this stock/date since we can't calculate a proper stop loss
+                
+                # Log the final values
+                self.log_debug(f"DEBUG: Entry price: {entry_price}")
+                self.log_debug(f"DEBUG: Stop loss price: {stop_loss_price}")
+                self.log_debug(f"DEBUG: USING - Entry: {entry_price}, Target: {entry_price * 1.002}, Stop loss: {stop_loss_price}")
+                result = self.analyze_future_performance(row['symbol'], row['date'], entry_price, stop_loss_price, pattern_data)
+                if result:
+                    self.results.append(result)
 
             # Save intermediate results every 50 stocks
             if (idx + 1) % 50 == 0:
@@ -428,7 +464,7 @@ Performance Metrics:
 def main():
     analyzer = OHLPatternAnalyzer()
     # Use the new input file
-    csv_path = os.path.expanduser("~/Downloads/Backtest OHOL+PRB, Technical Analysis Scanner.csv")
+    csv_path = os.path.expanduser("~/test.csv")
 
     print(f"Starting analysis using: {csv_path}")
     analyzer.analyze_stocks(csv_path)
